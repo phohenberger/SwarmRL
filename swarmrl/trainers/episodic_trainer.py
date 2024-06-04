@@ -105,7 +105,7 @@ class EpisodicTrainer(Trainer):
                                 " 'h5_group_tag'."
                             )
                     else:
-                        self.engine = get_engine(system)
+                        self.engine = get_engine(system, str(cycle_index))                   
 
                     # Initialize the tasks and observables.
                     for agent in self.agents.values():
@@ -116,6 +116,10 @@ class EpisodicTrainer(Trainer):
                 force_fn, current_reward, killed = self.update_rl()
 
                 rewards.append(current_reward)
+
+                a = system.lb[:,:,:].velocity
+                a = np.mean(np.abs(a))
+                print("mean abs velocity:", a)
 
                 episode += 1
                 progress.update(

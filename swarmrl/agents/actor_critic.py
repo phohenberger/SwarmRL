@@ -16,6 +16,9 @@ from swarmrl.observables.observable import Observable
 from swarmrl.tasks.task import Task
 from swarmrl.utils.colloid_utils import TrajectoryInformation
 
+import pathlib
+import h5py
+
 
 class ActorCriticAgent(Agent):
     """
@@ -32,6 +35,8 @@ class ActorCriticAgent(Agent):
         loss: Loss = ProximalPolicyLoss(),
         train: bool = True,
         intrinsic_reward: IntrinsicReward = None,
+        record_agent: bool = False,
+        out_folder: str = "./Agent_Data",
     ):
         """
         Constructor for the actor-critic protocol.
@@ -52,6 +57,10 @@ class ActorCriticAgent(Agent):
                 Flag to indicate if the agent is training.
         intrinsic_reward : IntrinsicReward (default=None)
                 Intrinsic reward to use for the agent.
+        record_agent : bool (default=False)
+                Flag to indicate if the agent should record data.
+        out_folder : str (default="./Agent_Data")
+                Folder to store the agent data.
         """
         # Properties of the agent.
         self.network = network
@@ -62,6 +71,9 @@ class ActorCriticAgent(Agent):
         self.train = train
         self.loss = loss
         self.intrinsic_reward = intrinsic_reward
+        self.record_agent = record_agent
+        self.out_folder = pathlib.Path(out_folder)
+        self.is_stored = False
 
         # Trajectory to be updated.
         self.trajectory = TrajectoryInformation(particle_type=self.particle_type)
@@ -103,6 +115,70 @@ class ActorCriticAgent(Agent):
         if self.intrinsic_reward:
             self.intrinsic_reward.update(self.trajectory)
 
+
+
+        # Save the agents data 
+        if self.record_agent == True:
+        
+            if self.is_stored == False:
+                self.h5_filename = self.out_folder / "agent_data.hdf5"
+                self.out_folder.mkdir(parents=True, exist_ok=True)
+                self.data_holder = {
+                    'features': list(),
+                    'actions': list(),
+                    'log_probs': list(),
+                    'rewards': list(),
+                }
+                n_colloids = np.array(self.trajectory.features).shape[1]
+                episode_length = np.array(self.trajectory.features).shape[0]
+
+                with h5py.File(self.h5_filename.as_posix(), 'a') as h5_outfile:
+                    agent_group = h5_outfile.require_group(f"Agent_{self.particle_type}")
+                    dataset_kwargs = dict(compression="gzip")
+                    
+                    agent_group.require_dataset(
+                        'features',
+                        shape = (1, episode_length, n_colloids, 1),
+                        maxshape=(None, episode_length, n_colloids, 1),
+                        dtype = np.float32,
+                        **dataset_kwargs,
+                    )
+                    for name in ['actions', 'log_probs', 'rewards']:
+                        agent_group.require_dataset(
+                            name,
+                            shape=(1, episode_length, n_colloids),
+                            maxshape=(None, episode_length, n_colloids),
+                            dtype = int if name == 'actions' else float,
+                            **dataset_kwargs,
+                        )
+
+                self.is_stored = True
+
+                self.write_idx = 0
+                self.h5_time_steps_written = 0
+
+            # Append the data
+            n_new_timesteps = 1 # because only after one episode this gets called
+
+            self.data_holder['features'].append(self.trajectory.features)
+            self.data_holder['actions'].append(self.trajectory.actions)
+            self.data_holder['log_probs'].append(self.trajectory.log_probs)
+            self.data_holder['rewards'].append(self.trajectory.rewards)
+
+
+            with h5py.File(self.h5_filename.as_posix(), 'a') as h5_outfile:
+                agent_group = h5_outfile[f"Agent_{self.particle_type}"]
+
+                for key in self.data_holder.keys():
+
+                    dataset = agent_group[key]
+                    values = np.stack(self.data_holder[key], axis=0)
+                    dataset.resize(self.write_idx + values.shape[0], axis = 0)
+                    dataset[self.write_idx : self.write_idx + values.shape[0]] = values
+            
+            self.h5_time_steps_written =+ n_new_timesteps
+
+
         # Reset the trajectory storage.
         self.reset_trajectory()
 
@@ -121,6 +197,7 @@ class ActorCriticAgent(Agent):
         """
         self.observable.initialize(colloids)
         self.task.initialize(colloids)
+        # TODO Regard agent storing?
 
     def reset_trajectory(self):
         """

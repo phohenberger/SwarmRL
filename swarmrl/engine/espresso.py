@@ -858,6 +858,7 @@ class EspressoMD(Engine):
         fluid_density: pint.Quantity = None,
         boundary_mask: np.array = None,
         ext_force_density: pint.Quantity = None,
+        gamma: pint.Quantity = None,
         use_GPU: bool = False,
     ):
         """
@@ -934,6 +935,8 @@ class EspressoMD(Engine):
             )
 
         self.lbf = lbf
+
+        self.lbf_gamma = gamma
 
         return lbf
 
@@ -1063,6 +1066,7 @@ class EspressoMD(Engine):
         -------
         Creates hdf5 database and updates class state.
         """
+
         self.h5_filename = self.out_folder / "trajectory.hdf5"
         self.out_folder.mkdir(parents=True, exist_ok=True)
         self.traj_holder = {
@@ -1072,6 +1076,8 @@ class EspressoMD(Engine):
             "Unwrapped_Positions": list(),
             "Velocities": list(),
             "Directors": list(),
+            "LB_Pos": list(),
+            "LB_Vel": list()
         }
 
         n_colloids = len(self.colloids)
@@ -1104,6 +1110,19 @@ class EspressoMD(Engine):
                     dtype=float,
                     **dataset_kwargs,
                 )
+
+            n_vec = self.lbf[:,:,:].velocity.shape[0] * self.lbf[:,:,:].velocity.shape[1] * self.lbf[:,:,:].velocity.shape[2]
+
+            for name in ["LB_Pos", "LB_Vel"]:
+                part_group.require_dataset(
+                    name,
+                    shape=(traj_len, n_vec, 3),
+                    maxshape=(None, n_vec, 3),
+                    dtype=float,
+                    **dataset_kwargs,
+                )
+            
+
         self.write_idx = 0
         self.h5_time_steps_written = 0
 
@@ -1128,6 +1147,30 @@ class EspressoMD(Engine):
         self.traj_holder["Directors"].append(
             np.stack([c.director for c in self.colloids], axis=0)
         )
+        
+        lb_vel = self.lbf[:,:,:].velocity
+
+
+        lx = round(self.params.box_length[0].to('micrometer').m)
+        ly = round(self.params.box_length[1].to('micrometer').m)
+        lz = round(self.params.box_length[2].to('micrometer').m)
+
+        agrid = self.lbf.agrid
+
+        xx = np.arange(0, lx, agrid)
+        yy = np.arange(0, ly, agrid)
+        zz = np.arange(0, lz, agrid)
+
+        lattice_points = np.array(np.meshgrid(xx, yy, zz)).T.reshape(-1, 3)
+
+        self.traj_holder["LB_Pos"].append(
+            np.array(lattice_points)
+        )
+
+        self.traj_holder["LB_Vel"].append(
+            lb_vel.reshape(-1, lb_vel.shape[-1])
+        )
+        
 
     def _write_traj_chunk_to_file(self):
         """
@@ -1195,7 +1238,7 @@ class EspressoMD(Engine):
             else:
                 self.system.lb = self.lbf
                 self.system.thermostat.set_lb(
-                    LB_fluid=self.lbf, gamma=1e300, seed=self.seed
+                    LB_fluid=self.lbf, gamma=1e-20, seed=self.seed
                 )
 
             self.system.integrator.set_vv()
