@@ -1076,9 +1076,12 @@ class EspressoMD(Engine):
             "Unwrapped_Positions": list(),
             "Velocities": list(),
             "Directors": list(),
-            "LB_Pos": list(),
-            "LB_Vel": list()
         }
+
+        if self.system.lb is not None:
+            self.traj_holder["LB_Positions"] = list()
+            self.traj_holder["LB_Velocities"] = list()
+                        
 
         n_colloids = len(self.colloids)
 
@@ -1111,16 +1114,17 @@ class EspressoMD(Engine):
                     **dataset_kwargs,
                 )
 
-            n_vec = self.lbf[:,:,:].velocity.shape[0] * self.lbf[:,:,:].velocity.shape[1] * self.lbf[:,:,:].velocity.shape[2]
+            if self.system.lb is not None:
+                n_vec = self.lbf[:,:,:].velocity.shape[0] * self.lbf[:,:,:].velocity.shape[1] * self.lbf[:,:,:].velocity.shape[2]
 
-            for name in ["LB_Pos", "LB_Vel"]:
-                part_group.require_dataset(
-                    name,
-                    shape=(traj_len, n_vec, 3),
-                    maxshape=(None, n_vec, 3),
-                    dtype=float,
-                    **dataset_kwargs,
-                )
+                for name in ["LB_Positions", "LB_Velocities"]:
+                    part_group.require_dataset(
+                        name,
+                        shape=(traj_len, n_vec, 3),
+                        maxshape=(None, n_vec, 3),
+                        dtype=float,
+                        **dataset_kwargs,
+                    )
             
 
         self.write_idx = 0
@@ -1148,28 +1152,35 @@ class EspressoMD(Engine):
             np.stack([c.director for c in self.colloids], axis=0)
         )
         
-        lb_vel = self.lbf[:,:,:].velocity
+        if self.system.lb is not None:
 
+            # TODO maybe saving every LB field at every time step is too much,
+            # could be reduced to just saving every 5 or so?
 
-        lx = round(self.params.box_length[0].to('micrometer').m)
-        ly = round(self.params.box_length[1].to('micrometer').m)
-        lz = round(self.params.box_length[2].to('micrometer').m)
+            # Somehow walberla does not have a function to return the position
+            # of its nodes?? so we have to calculate them manually
 
-        agrid = self.lbf.agrid
+            lb_vel = self.lbf[:,:,:].velocity
 
-        xx = np.arange(0, lx, agrid)
-        yy = np.arange(0, ly, agrid)
-        zz = np.arange(0, lz, agrid)
+            lx = round(self.params.box_length[0].to('micrometer').m)
+            ly = round(self.params.box_length[1].to('micrometer').m)
+            lz = round(self.params.box_length[2].to('micrometer').m)
 
-        lattice_points = np.array(np.meshgrid(xx, yy, zz)).T.reshape(-1, 3)
+            agrid = self.lbf.agrid
 
-        self.traj_holder["LB_Pos"].append(
-            np.array(lattice_points)
-        )
+            xx = np.arange(agrid/2, lx, agrid)
+            yy = np.arange(agrid/2, ly, agrid)
+            zz = np.arange(agrid/2, lz, agrid)
 
-        self.traj_holder["LB_Vel"].append(
-            lb_vel.reshape(-1, lb_vel.shape[-1])
-        )
+            lattice_points = np.array(np.meshgrid(xx, yy, zz)).T.reshape(-1, 3)
+
+            self.traj_holder["LB_Positions"].append(
+                np.array(lattice_points)
+            )
+
+            self.traj_holder["LB_Velocities"].append(
+                lb_vel.reshape(-1, lb_vel.shape[-1])
+            )
         
 
     def _write_traj_chunk_to_file(self):

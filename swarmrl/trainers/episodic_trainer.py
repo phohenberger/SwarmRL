@@ -117,10 +117,6 @@ class EpisodicTrainer(Trainer):
 
                 rewards.append(current_reward)
 
-                a = system.lb[:,:,:].velocity
-                a = np.mean(np.abs(a))
-                print("mean abs velocity:", a)
-
                 episode += 1
                 progress.update(
                     task,
