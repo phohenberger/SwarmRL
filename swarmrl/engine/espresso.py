@@ -1,6 +1,7 @@
 """
 Module for the espressoMD simulations.
 """
+import time
 
 import dataclasses
 import logging
@@ -23,6 +24,7 @@ try:
     import espressomd.constraints
     import espressomd.lb
     import espressomd.shapes
+    import espressomd.propagation as ep
 except ModuleNotFoundError:
     logger.warning("Could not find espressomd. Features will not be available")
 
@@ -197,6 +199,7 @@ class EspressoMD(Engine):
 
         self.colloids = list()
         self.lbf: espressomd.lb.LBFluidWalberla = None
+        self.lb_constraints = list() # register for lb constraints
 
         # register to lookup which type has which radius
         self.colloid_radius_register = {}
@@ -221,12 +224,15 @@ class EspressoMD(Engine):
         # three basis units chosen arbitrarily
         self.ureg.define("sim_length = 1e-6 meter")
         self.ureg.define("sim_time = 1 second")
-        self.ureg.define("sim_energy = 293 kelvin * boltzmann_constant")
+        #self.ureg.define("sim_mass = 1e-15 kilogram")
+        self.ureg.define("boltzmann_constant = 1.3806e-23 meter**2 * kilogram / second**2 / kelvin")
+        self.ureg.define("sim_energy = 293.15 kelvin * 1.3806e-23 meter**2 * kilogram / second**2 / kelvin")
 
         # derived units
         self.ureg.define("sim_velocity = sim_length / sim_time")
         self.ureg.define("sim_angular_velocity = 1 / sim_time")
         self.ureg.define("sim_mass = sim_energy / sim_velocity**2")
+        #self.ureg.define("sim_energy = sim_mass * sim_velocity**2")
         self.ureg.define("sim_rinertia = sim_length**2 * sim_mass")
         self.ureg.define("sim_dyn_viscosity = sim_mass / (sim_length * sim_time)")
         self.ureg.define("sim_kin_viscosity = sim_length**2 / sim_time")
@@ -412,18 +418,24 @@ class EspressoMD(Engine):
                     3 * [rinertia], self.params.ureg
                 )
 
+        print("gamma: ", gamma_translation)
+        print("mass: ", mass.m_as("sim_mass"))
+        print("gamma rot: ", gamma_rotation)
+
         if self.n_dims == 3:
             colloid = self.system.part.add(
                 pos=init_pos,
                 director=init_direction,
                 rotation=3 * [True],
-                gamma=gamma_translation,
-                gamma_rot=gamma_rotation,
+                gamma= gamma_translation,
+                gamma_rot= gamma_rotation,
                 fix=3 * [False],
                 type=type_colloid,
                 mass=mass.m_as("sim_mass"),
                 rinertia=rinertia.m_as("sim_rinertia"),
             )
+
+    
         else:
             # initialize with body-frame = lab-frame to set correct rotation flags
             # allow all rotations to bring the particle to correct state
@@ -432,8 +444,8 @@ class EspressoMD(Engine):
                 pos=init_pos,
                 fix=[False, False, True],
                 rotation=3 * [True],
-                gamma=gamma_translation,
-                gamma_rot=gamma_rotation,
+                gamma= gamma_translation,
+                gamma_rot= gamma_rotation,
                 quat=[1, 0, 0, 0],
                 type=type_colloid,
                 mass=mass.m_as("sim_mass"),
@@ -447,6 +459,10 @@ class EspressoMD(Engine):
                     " Change something in your colloid setup."
                 )
             self._rotate_colloid_to_2d(colloid, phi)
+
+        # enable rotational langevin friction (disable translational langevin)
+        if self.lbf is not None: # TODO Make this not only rely on if there is a lb, but rather some flag
+            colloid.propagation = ep.Propagation.ROT_LANGEVIN | ep.Propagation.TRANS_LB_MOMENTUM_EXCHANGE
 
         self.colloids.append(colloid)
 
@@ -542,6 +558,7 @@ class EspressoMD(Engine):
                 mass=mass,
                 rinertia=rinertia,
             )
+    
 
     def add_rod(
         self,
@@ -799,6 +816,126 @@ class EspressoMD(Engine):
             {wall_type: {"radius": 0.0, "aspect_ratio": 1.0}}
         )
 
+    def add_sphere_constraint(self, center: pint.Quantity, radius: pint.Quantity, wall_type: int, lb: bool = False):
+
+        center = center.m_as("sim_length")
+        radius = radius.m_as("sim_length")
+
+        self._check_already_initialised()
+        if wall_type in self.colloid_radius_register.keys():
+            if self.colloid_radius_register[wall_type] != 0.0:
+                raise ValueError(
+                    f" The chosen type {wall_type} is already taken"
+                    "and used with a different radius "
+                    f"{self.colloid_radius_register[wall_type]['radius']}."
+                    " Choose a new combination"
+                )
+        
+        sphere_shape = espressomd.shapes.Sphere(center=center, radius=radius)
+        sphere_constr = espressomd.constraints.ShapeBasedConstraint(
+            shape= sphere_shape, particle_type=wall_type, penetrable=False
+        )
+
+        self.system.constraints.add(sphere_constr)
+
+        if lb:
+            self.lb_constraints.append(sphere_shape)
+        
+        self.colloid_radius_register.update(
+            {wall_type: {"radius": 0.0, "aspect_ratio": 1.0}}
+        )
+
+    def add_box_constraint(self, base: pint.Quantity, x_len: pint.Quantity, y_len: pint.Quantity, z_len: pint.Quantity, wall_type: int, lb: bool = False):
+
+        x_len = x_len.m_as("sim_length")
+        y_len = y_len.m_as("sim_length")
+        z_len = z_len.m_as("sim_length")
+        base = base.m_as("sim_length")
+
+        x_vec = [x_len, 0, 0]
+        y_vec = [0, y_len, 0]
+        z_vec = [0, 0, z_len]
+
+        self._check_already_initialised()
+        if wall_type in self.colloid_radius_register.keys():
+            if self.colloid_radius_register[wall_type] != 0.0:
+                raise ValueError(
+                    f" The chosen type {wall_type} is already taken"
+                    "and used with a different radius "
+                    f"{self.colloid_radius_register[wall_type]['radius']}."
+                    " Choose a new combination"
+                )
+
+        box_shape = espressomd.shapes.Rhomboid(corner=base, a=x_vec, b=y_vec, c=z_vec, direction=1)
+        box_constr = espressomd.constraints.ShapeBasedConstraint(
+            shape= box_shape, particle_type=wall_type, penetrable=False
+        )
+        
+        self.system.constraints.add(box_constr)
+
+        if lb:
+            self.lb_constraints.append(box_shape)
+
+        self.colloid_radius_register.update(
+            {wall_type: {"radius": 0.0, "aspect_ratio": 1.0}}
+        )
+        
+    
+    def add_and_warmup_lattice_boltzmann(self,
+                                        agrid: pint.Quantity = None,
+                                        lb_time_step: pint.Quantity = None,
+                                        lb_warmup_timestep: pint.Quantity = None,
+                                        lb_warmup_time: pint.Quantity = None,
+                                        dynamic_viscosity: pint.Quantity = None,
+                                        fluid_density: pint.Quantity = None,
+                                        boundary_mask: np.array = None,
+                                        ext_force_density: pint.Quantity = None,
+                                        use_GPU: bool = False,
+                                        save_LB: bool = False,
+                                        save_interval: np.array = np.array([1,1,1])):
+        
+        final_lb_timestep = lb_time_step
+        final_sim_timestep = self.params.time_step
+        self.params.time_step = lb_warmup_timestep
+
+        self.add_lattice_boltzmann(
+            agrid=agrid,
+            dynamic_viscosity=dynamic_viscosity,
+            fluid_density=fluid_density,
+            lb_time_step=lb_warmup_timestep,
+            use_GPU=use_GPU,
+            boundary_mask=boundary_mask,
+            ext_force_density=ext_force_density,
+            save_LB = False
+        )
+
+        n_warmup_timesteps = int(lb_warmup_time.m_as("sim_time") / lb_warmup_timestep.m_as("sim_time"))
+
+        self.system.lb = self.lbf
+        self.system.integrator.run(n_warmup_timesteps)
+
+        velocity_after_warmup = self.system.lb[:,:,:].velocity
+
+        # reset lb
+        self.lbf = None
+        self.system.lb = None
+        self.system.time = 0.0
+        self.params.time_step = final_sim_timestep
+        self.system.timestep = self.params.time_step.m_as("sim_time")
+
+        self.add_lattice_boltzmann(
+            agrid=agrid,
+            dynamic_viscosity=dynamic_viscosity,
+            fluid_density=fluid_density,
+            lb_time_step=final_lb_timestep,
+            use_GPU=use_GPU,
+            boundary_mask=boundary_mask,
+            ext_force_density=ext_force_density,
+            save_LB = save_LB,
+            save_interval=save_interval,
+            velocity_profile=velocity_after_warmup,
+        )
+
     def _setup_interactions(self):
         aspect_ratios = [
             d["aspect_ratio"] for d in self.colloid_radius_register.values()
@@ -859,6 +996,9 @@ class EspressoMD(Engine):
         boundary_mask: np.array = None,
         ext_force_density: pint.Quantity = None,
         use_GPU: bool = False,
+        save_LB: bool = False,
+        save_interval: np.array = np.array([1,1,1]),
+        velocity_profile = None
     ):
         """
         Add a lattice boltzmann fluid to the simulation.
@@ -901,23 +1041,44 @@ class EspressoMD(Engine):
         if ext_force_density is None:
             ext_force_density = self.ureg.Quantity(np.zeros(3), "N/m**3")
         if use_GPU:
-            raise NotImplementedError(
-                "GPU support is not yet implemented. Stay tuned tho"
-            )
+            print("time", lb_time_step.m_as("sim_time"))
+            print("kT", (self.params.temperature * self.ureg.boltzmann_constant).m_as(
+                    "sim_energy"
+                ))
+            print("density", fluid_density.m_as("sim_mass/sim_length**3"))
+            print("kin visc", (dynamic_viscosity / fluid_density).m_as(
+                    "sim_kin_viscosity"
+                ))
+            print("agrid",agrid.m_as("sim_length"))
+            print("force", ext_force_density.m_as("sim_force/sim_length**3"))
 
-        lbf = espressomd.lb.LBFluidWalberla(
-            tau=lb_time_step.m_as("sim_time"),
-            kT=(self.params.temperature * self.ureg.boltzmann_constant).m_as(
-                "sim_energy"
-            ),
-            density=fluid_density.m_as("sim_mass/sim_length**3"),
-            kinematic_viscosity=(dynamic_viscosity / fluid_density).m_as(
-                "sim_kin_viscosity"
-            ),
-            agrid=agrid.m_as("sim_length"),
-            seed=self.seed,
-            ext_force_density=ext_force_density.m_as("sim_force/sim_length**3"),
-        )
+            lbf = espressomd.lb.LBFluidWalberlaGPU(
+                tau=lb_time_step.m_as("sim_time"),
+                kT=(self.params.temperature * self.ureg.boltzmann_constant).m_as(
+                    "sim_energy"
+                ),
+                density=fluid_density.m_as("sim_mass/sim_length**3"),
+                kinematic_viscosity=(dynamic_viscosity / fluid_density).m_as(
+                    "sim_kin_viscosity"
+                ),
+                agrid=agrid.m_as("sim_length"),
+                seed=self.seed,
+                ext_force_density=ext_force_density.m_as("sim_force/sim_length**3"),
+            )
+        else: 
+            lbf = espressomd.lb.LBFluidWalberla(
+                tau=lb_time_step.m_as("sim_time"),
+                kT=(self.params.temperature * self.ureg.boltzmann_constant).m_as(
+                    "sim_energy"
+                ),
+                density=fluid_density.m_as("sim_mass/sim_length**3"),
+                kinematic_viscosity=(dynamic_viscosity / fluid_density).m_as(
+                    "sim_kin_viscosity"
+                ),
+                agrid=agrid.m_as("sim_length"),
+                seed=self.seed,
+                ext_force_density=ext_force_density.m_as("sim_force/sim_length**3"),
+            )
 
         if boundary_mask is not None:
             from espressomd.script_interface import array_variant
@@ -934,6 +1095,12 @@ class EspressoMD(Engine):
             )
 
         self.lbf = lbf
+        self.save_LB = save_LB
+        self.save_interval = save_interval
+        self.lb_velocity_profile = velocity_profile
+
+        for shape in self.lb_constraints:
+            self.lbf.add_boundary_from_shape(shape)
 
         return lbf
 
@@ -1063,6 +1230,7 @@ class EspressoMD(Engine):
         -------
         Creates hdf5 database and updates class state.
         """
+
         self.h5_filename = self.out_folder / "trajectory.hdf5"
         self.out_folder.mkdir(parents=True, exist_ok=True)
         self.traj_holder = {
@@ -1073,6 +1241,11 @@ class EspressoMD(Engine):
             "Velocities": list(),
             "Directors": list(),
         }
+
+        if self.system.lb is not None and self.save_LB:
+            self.traj_holder["LB_Positions"] = list()
+            self.traj_holder["LB_Velocities"] = list()
+                        
 
         n_colloids = len(self.colloids)
 
@@ -1104,6 +1277,39 @@ class EspressoMD(Engine):
                     dtype=float,
                     **dataset_kwargs,
                 )
+
+            if self.system.lb is not None and self.save_LB:
+                lx = round(self.params.box_length[0].to('micrometer').m)
+                ly = round(self.params.box_length[1].to('micrometer').m)
+                lz = round(self.params.box_length[2].to('micrometer').m)
+
+                agrid = self.lbf.agrid
+
+                xx = np.arange(agrid/2, lx, self.save_interval[0] * agrid)
+                yy = np.arange(agrid/2, ly, self.save_interval[1] * agrid)
+                zz = np.arange(agrid/2, lz, self.save_interval[2] * agrid)
+
+                self.LB_points = np.array(np.meshgrid(xx, yy, zz)).T.reshape(-1, 3)
+                n_vec = len(self.LB_points)
+
+
+                part_group.require_dataset(
+                        "LB_Positions",
+                        shape=(1, n_vec, 3),
+                        maxshape=(None, n_vec, 3),
+                        dtype=float,
+                        **dataset_kwargs,
+                    )
+                part_group.require_dataset(
+                        "LB_Velocities",
+                        shape=(traj_len, n_vec, 3),
+                        maxshape=(None, n_vec, 3),
+                        dtype=float,
+                        **dataset_kwargs,
+                    )
+            
+        self.initial_write = True
+        self.initial_calc = True
         self.write_idx = 0
         self.h5_time_steps_written = 0
 
@@ -1128,6 +1334,25 @@ class EspressoMD(Engine):
         self.traj_holder["Directors"].append(
             np.stack([c.director for c in self.colloids], axis=0)
         )
+        
+        if self.system.lb is not None and self.save_LB:
+            
+            # Somehow walberla does not have a function to return the position
+            # of its nodes?? so we have to calculate them manually
+
+            if self.initial_write and self.initial_calc:
+                self.traj_holder["LB_Positions"].append(
+                    np.array(self.LB_points)
+                )
+                self.initial_calc = False
+            
+            lb_vel = self.lbf[:,:,:].velocity
+            lb_vel = lb_vel[::self.save_interval[0], ::self.save_interval[1], ::self.save_interval[2] ]
+
+            self.traj_holder["LB_Velocities"].append(
+                lb_vel.reshape(-1, lb_vel.shape[-1])
+            )
+        
 
     def _write_traj_chunk_to_file(self):
         """
@@ -1145,15 +1370,20 @@ class EspressoMD(Engine):
             part_group = h5_outfile[self.h5_group_tag]
 
             for key in self.traj_holder.keys():
+                if key == "LB_Positions" and not self.initial_write:
+                    continue  # Skip LB_Positions if already written
+
                 dataset = part_group[key]
                 values = np.stack(self.traj_holder[key], axis=0)
                 # save in format (time_step, n_particles, dimension)
                 dataset.resize(self.h5_time_steps_written + n_new_timesteps, axis=0)
                 dataset[
-                    self.h5_time_steps_written : self.h5_time_steps_written
+                    self.h5_time_steps_written: self.h5_time_steps_written
                     + n_new_timesteps,
                     ...,
                 ] = values
+        
+        self.initial_write = False
 
         logger.debug(f"wrote {n_new_timesteps} time steps to hdf5 file")
         self.h5_time_steps_written += n_new_timesteps
@@ -1194,9 +1424,21 @@ class EspressoMD(Engine):
                 )
             else:
                 self.system.lb = self.lbf
+                
+                if self.lb_velocity_profile is not None:
+                    self.system.lb[:,:,:].velocity = self.lb_velocity_profile
+
+                self.system.thermostat.set_langevin(
+                   kT=kT,
+                    gamma=1e-20,
+                    gamma_rotation=1e-20,
+                    seed=self.seed,
+                )
+
                 self.system.thermostat.set_lb(
                     LB_fluid=self.lbf, gamma=1e300, seed=self.seed
                 )
+                
 
             self.system.integrator.set_vv()
 
@@ -1213,7 +1455,15 @@ class EspressoMD(Engine):
         """
         swarmrl_colloids = []
         if force_model is not None:
+            #velocities = np.copy(self.system.lb[:,:,:].velocity)
             for col in self.colloids:
+                if self.lbf is not None:                 
+                    flow_velocity = self.system.lb.get_interpolated_velocity(pos=col.pos)
+                    flow_magnitude = np.linalg.norm(flow_velocity)
+                else:
+                    flow_velocity=None
+                    flow_magnitude=None
+
                 swarmrl_colloids.append(
                     Colloid(
                         pos=col.pos,
@@ -1221,6 +1471,8 @@ class EspressoMD(Engine):
                         director=col.director,
                         id=col.id,
                         type=col.type,
+                        flow_velocity=flow_velocity,
+                        flow_magnitude=flow_magnitude,
                     )
                 )
             actions = force_model.calc_action(swarmrl_colloids)
@@ -1301,10 +1553,18 @@ class EspressoMD(Engine):
             )
             steps_to_next = min(steps_to_next_write, steps_to_next_slice)
 
+            #for i in range(steps_to_next):
+                #print("========")
+                #print("force ", self.system.part.by_id(0).f)
+                #print("vel ",self.system.lb.get_interpolated_velocity(pos=self.system.part.by_id(0).pos))
+            #    self.system.integrator.run(
+            #        1, reuse_forces=True, recalc_forces=False
+            #    )
             self.system.integrator.run(
-                steps_to_next, reuse_forces=True, recalc_forces=False
-            )
+                    steps_to_next, reuse_forces=True, recalc_forces=False
+                )
             self.step_idx += steps_to_next
+        
 
     def finalize(self):
         """

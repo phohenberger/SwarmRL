@@ -105,7 +105,7 @@ class EpisodicTrainer(Trainer):
                                 " 'h5_group_tag'."
                             )
                     else:
-                        self.engine = get_engine(system)
+                        self.engine = get_engine(system, str(cycle_index))                   
 
                     # Initialize the tasks and observables.
                     for agent in self.agents.values():
