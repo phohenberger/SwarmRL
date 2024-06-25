@@ -418,10 +418,6 @@ class EspressoMD(Engine):
                     3 * [rinertia], self.params.ureg
                 )
 
-        print("gamma: ", gamma_translation)
-        print("mass: ", mass.m_as("sim_mass"))
-        print("gamma rot: ", gamma_rotation)
-
         if self.n_dims == 3:
             colloid = self.system.part.add(
                 pos=init_pos,
@@ -1041,17 +1037,6 @@ class EspressoMD(Engine):
         if ext_force_density is None:
             ext_force_density = self.ureg.Quantity(np.zeros(3), "N/m**3")
         if use_GPU:
-            print("time", lb_time_step.m_as("sim_time"))
-            print("kT", (self.params.temperature * self.ureg.boltzmann_constant).m_as(
-                    "sim_energy"
-                ))
-            print("density", fluid_density.m_as("sim_mass/sim_length**3"))
-            print("kin visc", (dynamic_viscosity / fluid_density).m_as(
-                    "sim_kin_viscosity"
-                ))
-            print("agrid",agrid.m_as("sim_length"))
-            print("force", ext_force_density.m_as("sim_force/sim_length**3"))
-
             lbf = espressomd.lb.LBFluidWalberlaGPU(
                 tau=lb_time_step.m_as("sim_time"),
                 kT=(self.params.temperature * self.ureg.boltzmann_constant).m_as(
@@ -1552,14 +1537,6 @@ class EspressoMD(Engine):
                 self.params.steps_per_slice * self.slice_idx - self.step_idx
             )
             steps_to_next = min(steps_to_next_write, steps_to_next_slice)
-
-            #for i in range(steps_to_next):
-                #print("========")
-                #print("force ", self.system.part.by_id(0).f)
-                #print("vel ",self.system.lb.get_interpolated_velocity(pos=self.system.part.by_id(0).pos))
-            #    self.system.integrator.run(
-            #        1, reuse_forces=True, recalc_forces=False
-            #    )
             self.system.integrator.run(
                     steps_to_next, reuse_forces=True, recalc_forces=False
                 )
