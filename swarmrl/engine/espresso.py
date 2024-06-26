@@ -1037,6 +1037,7 @@ class EspressoMD(Engine):
         if ext_force_density is None:
             ext_force_density = self.ureg.Quantity(np.zeros(3), "N/m**3")
         if use_GPU:
+
             lbf = espressomd.lb.LBFluidWalberlaGPU(
                 tau=lb_time_step.m_as("sim_time"),
                 kT=(self.params.temperature * self.ureg.boltzmann_constant).m_as(
@@ -1442,12 +1443,33 @@ class EspressoMD(Engine):
         if force_model is not None:
             #velocities = np.copy(self.system.lb[:,:,:].velocity)
             for col in self.colloids:
-                if self.lbf is not None:                 
+                if self.lbf is not None:
+                    if self.n_dims==3:
+                        print("WARNING: Flow gradients are not implemented for 3D yet, stay tuned tho. Gradients are wrong.")
+
+                    direction = col.director
+                    # COUNTER CLOCKWISE!
+                    print(col.director[0])
+                    angle = np.arccos(col.director[0] - np.sign(col.director[0])*1e-8) # sometimes director[0] is a little bit larger than 1
+                    # orthonagal 2D vector to direction, 90 degree CCW
+                    ortho_dir = np.array([np.cos(angle + np.pi/2), np.sin(angle + np.pi/2), 0]) 
+
+
+                    # same convention as CW CCW
+                    flow_forward = self.system.lb.get_interpolated_velocity(pos=(col.pos + direction))
+                    flow_backward = self.system.lb.get_interpolated_velocity(pos=(col.pos - direction))
+                    diff_forward_to_backward = flow_backward - flow_forward
+                    flow_grad_forward= np.dot(diff_forward_to_backward, ortho_dir)
+
+                    flow_left = self.system.lb.get_interpolated_velocity(pos=(col.pos + ortho_dir))
+                    flow_right = self.system.lb.get_interpolated_velocity(pos=(col.pos - ortho_dir))
+                    diff_left_to_right = flow_right - flow_left
+                    flow_grad_left = np.dot(diff_left_to_right, direction)
+
+
                     flow_velocity = self.system.lb.get_interpolated_velocity(pos=col.pos)
-                    flow_magnitude = np.linalg.norm(flow_velocity)
                 else:
                     flow_velocity=None
-                    flow_magnitude=None
 
                 swarmrl_colloids.append(
                     Colloid(
@@ -1457,7 +1479,8 @@ class EspressoMD(Engine):
                         id=col.id,
                         type=col.type,
                         flow_velocity=flow_velocity,
-                        flow_magnitude=flow_magnitude,
+                        flow_grad_forward_to_backward=flow_grad_forward,
+                        flow_grad_left_to_right=flow_grad_left
                     )
                 )
             actions = force_model.calc_action(swarmrl_colloids)
@@ -1537,6 +1560,14 @@ class EspressoMD(Engine):
                 self.params.steps_per_slice * self.slice_idx - self.step_idx
             )
             steps_to_next = min(steps_to_next_write, steps_to_next_slice)
+
+            #for i in range(steps_to_next):
+                #print("========")
+                #print("force ", self.system.part.by_id(0).f)
+                #print("vel ",self.system.lb.get_interpolated_velocity(pos=self.system.part.by_id(0).pos))
+            #    self.system.integrator.run(
+            #        1, reuse_forces=True, recalc_forces=False
+            #    )
             self.system.integrator.run(
                     steps_to_next, reuse_forces=True, recalc_forces=False
                 )

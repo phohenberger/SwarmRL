@@ -21,7 +21,8 @@ class Colloid:
     velocity: np.ndarray = None
     type: int = 0
     flow_velocity: np.ndarray = None
-    flow_magnitude: float = None
+    flow_grad_forward_to_backward: float = None
+    flow_grad_left_to_right: float = None
 
     def __repr__(self):
         """
@@ -30,7 +31,7 @@ class Colloid:
         return (
             f"Colloid(pos={self.pos}, director={self.director}, id={self.id},"
             f" velocity={self.velocity}, type={self.type}"
-            f" flow velocity={self.flow_velocity}, flow magnitude={self.flow_magnitude})" 
+            f" flow velocity={self.flow_velocity}, flow grad forward to backward={self.flow_grad_forward_to_backward}), flow grad left to right={self.flow_grad_left_to_right})" 
         )
 
     def __eq__(self, other):
@@ -40,7 +41,7 @@ class Colloid:
         """
         Flatten the PyTree.
         """
-        children = (self.pos, self.director, self.id, self.velocity, self.type, self.flow_velocity, self.flow_magnitude)
+        children = (self.pos, self.director, self.id, self.velocity, self.type, self.flow_velocity, self.flow_grad_forward_to_backward, self.flow_grad_left_to_right)
         aux_data = None
         return (children, aux_data)
 
