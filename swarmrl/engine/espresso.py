@@ -1444,32 +1444,33 @@ class EspressoMD(Engine):
             #velocities = np.copy(self.system.lb[:,:,:].velocity)
             for col in self.colloids:
                 if self.lbf is not None:
-                    if self.n_dims==3:
-                        print("WARNING: Flow gradients are not implemented for 3D yet, stay tuned tho. Gradients are wrong.")
+                    if self.n_dims==2:
+                        direction = col.director
+                        # COUNTER CLOCKWISE!
+                        angle = np.arccos(col.director[0] - np.sign(col.director[0])*1e-8) # sometimes director[0] is a little bit larger than 1
+                        # orthonagal 2D vector to direction, 90 degree CCW
+                        ortho_dir = np.array([np.cos(angle + np.pi/2), np.sin(angle + np.pi/2), 0]) 
 
-                    direction = col.director
-                    # COUNTER CLOCKWISE!
-                    print(col.director[0])
-                    angle = np.arccos(col.director[0] - np.sign(col.director[0])*1e-8) # sometimes director[0] is a little bit larger than 1
-                    # orthonagal 2D vector to direction, 90 degree CCW
-                    ortho_dir = np.array([np.cos(angle + np.pi/2), np.sin(angle + np.pi/2), 0]) 
+                        # same convention as CW CCW
+                        flow_forward = self.system.lb.get_interpolated_velocity(pos=(col.pos + direction))
+                        flow_backward = self.system.lb.get_interpolated_velocity(pos=(col.pos - direction))
+                        diff_forward_to_backward = flow_backward - flow_forward
+                        flow_grad_forward= np.dot(diff_forward_to_backward, ortho_dir)
 
+                        flow_left = self.system.lb.get_interpolated_velocity(pos=(col.pos + ortho_dir))
+                        flow_right = self.system.lb.get_interpolated_velocity(pos=(col.pos - ortho_dir))
+                        diff_left_to_right = flow_right - flow_left
+                        flow_grad_left = np.dot(diff_left_to_right, direction)
 
-                    # same convention as CW CCW
-                    flow_forward = self.system.lb.get_interpolated_velocity(pos=(col.pos + direction))
-                    flow_backward = self.system.lb.get_interpolated_velocity(pos=(col.pos - direction))
-                    diff_forward_to_backward = flow_backward - flow_forward
-                    flow_grad_forward= np.dot(diff_forward_to_backward, ortho_dir)
-
-                    flow_left = self.system.lb.get_interpolated_velocity(pos=(col.pos + ortho_dir))
-                    flow_right = self.system.lb.get_interpolated_velocity(pos=(col.pos - ortho_dir))
-                    diff_left_to_right = flow_right - flow_left
-                    flow_grad_left = np.dot(diff_left_to_right, direction)
-
-
-                    flow_velocity = self.system.lb.get_interpolated_velocity(pos=col.pos)
+                        flow_velocity = self.system.lb.get_interpolated_velocity(pos=col.pos)
+                    else:
+                        flow_velocity = 0
+                        flow_grad_left = 0
+                        flow_grad_forward = 0
                 else:
-                    flow_velocity=None
+                    flow_velocity = 0
+                    flow_grad_left = 0
+                    flow_grad_forward = 0
 
                 swarmrl_colloids.append(
                     Colloid(
