@@ -131,6 +131,7 @@ class ActorCriticAgent(Agent):
                 }
                 n_colloids = np.array(self.trajectory.features).shape[1]
                 episode_length = np.array(self.trajectory.features).shape[0]
+                n_observables = np.array(self.trajectory.features).shape[2]
 
                 with h5py.File(self.h5_filename.as_posix(), 'a') as h5_outfile:
                     agent_group = h5_outfile.require_group(f"Agent_{self.particle_type}")
@@ -138,8 +139,8 @@ class ActorCriticAgent(Agent):
                     
                     agent_group.require_dataset(
                         'features',
-                        shape = (1, episode_length, n_colloids, 2), # the two at the end is the shape of the observable, has to be automized
-                        maxshape=(None, episode_length, n_colloids, 2), # same
+                        shape = (1, episode_length, n_colloids, n_observables),
+                        maxshape=(None, episode_length, n_colloids, n_observables), 
                         dtype = np.float32,
                         **dataset_kwargs,
                     )
