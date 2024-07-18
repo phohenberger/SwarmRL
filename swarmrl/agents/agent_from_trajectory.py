@@ -21,6 +21,7 @@ class AgentFromTrajectory(ClassicalAgent):
         acts_on_types: typing.List[float] = [1],
         params: np.array = None,
         home_pos: np.array = np.array([0, 0, 0]),
+        particle_type: int = 4, # TODO find good default value
     ):
         """
         Initialize the AgentFromTrajectory object.
@@ -72,6 +73,8 @@ class AgentFromTrajectory(ClassicalAgent):
         self.index_tracker = -1
         self.time_slice = time_slice
 
+        self.particle_type = particle_type
+
     def load_trajectory(self, trajectory_file: str):
         """
         Load the trajectory from a file.
@@ -89,7 +92,8 @@ class AgentFromTrajectory(ClassicalAgent):
         """
         Calculate the force needed to reach next_pos in time_slice.
         """
-        mass = 1
+       
+        mass = 100
         if velocity is None:
             velocity = np.array([0, 0, 0])
         return (next_pos - pos - velocity * time_slice) * 2 * mass / time_slice**2
@@ -98,7 +102,6 @@ class AgentFromTrajectory(ClassicalAgent):
         actions = []
         self.index_tracker += 1
         self.t += self.time_slice
-
         for colloid in colloids:
             if colloid.type not in self.acts_on_types:
                 actions.append(Action())
@@ -113,7 +116,7 @@ class AgentFromTrajectory(ClassicalAgent):
                 actions.append(Action(force=force_value, new_direction=new_direction))
 
             else:
-                pos = self.wanted_pos[self.index_tracker]
+                pos = colloid.pos
                 next_pos = self.wanted_pos[self.index_tracker + 1]
                 force = self.calc_force_next_pos(
                     pos, next_pos, colloid.velocity, self.time_slice
@@ -123,6 +126,19 @@ class AgentFromTrajectory(ClassicalAgent):
                 actions.append(Action(force=force_value, new_direction=new_direction))
 
         return actions
+    
+    def reset_agent(self, colloids):
+        """
+        Reset the agent.
+        """
+        self.t = 0
+        self.index_tracker = -1
+
+    def save_agent(self, directory: str):
+        """
+        Save the agent.
+        """
+        pass
 
 
 def harmonic_1d(t, pos, director, home_pos, params):

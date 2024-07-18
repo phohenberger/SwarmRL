@@ -115,17 +115,6 @@ class EpisodicTrainer(Trainer):
 
                 force_fn, current_reward, killed = self.update_rl()
 
-                #pressure = self.engine.lbf[:,:,:].pressure_tensor
-                #density = self.engine.lbf[:,:,:].density
-
-                #import matplotlib.pyplot as plt
-                #plt.imshow(density[:,:,0])
-                #plt.show()
-                #print(pressure.shape)
-                #print(np.mean(pressure, axis=3).shape)
-                #plt.imshow(np.mean(np.mean(pressure[:,:,0], axis=2), axis=2))
-                #plt.show()
-
                 rewards.append(current_reward)
 
                 episode += 1
