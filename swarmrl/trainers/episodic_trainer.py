@@ -87,13 +87,14 @@ class EpisodicTrainer(Trainer):
                 running_reward=np.mean(rewards),
                 visible=load_bar,
             )
-
+            reset_id = 0
             for episode in range(n_episodes):
                 # Check if the system should be reset.
                 if episode % reset_frequency == 0 or killed:
                     if OUT_PATH is not None:
-                        self.export_models(f"{OUT_PATH}/tr{cycle_index}/")
-
+                        self.export_models(f"{OUT_PATH}/tr{reset_id}/")
+                        reset_id += 1
+                    
                     print(f"Resetting the system at episode {episode}")
                     self.engine = None
                     if save_episodic_data:
