@@ -32,6 +32,7 @@ class EpisodicTrainer(Trainer):
         reset_frequency: int = 1,
         load_bar: bool = True,
         save_episodic_data: bool = True,
+        OUT_PATH: str = None,
     ):
         """
         Perform the RL training.
@@ -90,6 +91,9 @@ class EpisodicTrainer(Trainer):
             for episode in range(n_episodes):
                 # Check if the system should be reset.
                 if episode % reset_frequency == 0 or killed:
+                    if OUT_PATH is not None:
+                        self.export_models(f"{OUT_PATH}/tr{cycle_index}/")
+
                     print(f"Resetting the system at episode {episode}")
                     self.engine = None
                     if save_episodic_data:
