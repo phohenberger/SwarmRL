@@ -1454,7 +1454,8 @@ class EspressoMD(Engine):
                     if self.n_dims==2:
                         direction = col.director
                         # COUNTER CLOCKWISE!
-                        angle = np.arccos(col.director[0] - np.sign(col.director[0])*1e-8) # sometimes director[0] is a little bit larger than 1
+                        
+                        angle = np.arccos(col.director[0] - np.sign(col.director[0])*1e-7) # sometimes director[0] is a little bit larger than 1
                         # orthonagal 2D vector to direction, 90 degree CCW
                         ortho_dir = np.array([np.cos(angle - np.pi/2), np.sin(angle - np.pi/2), 0]) 
 
@@ -1469,11 +1470,19 @@ class EspressoMD(Engine):
                         diff_left_to_right = flow_right - flow_left
                         flow_grad_left = np.dot(diff_left_to_right, direction)
 
-                        flow_velocity1 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 1 * direction + 3 * ortho_dir))
-                        flow_velocity2 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 1 * direction + 3 * ortho_dir))
-                        flow_velocity3 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 1 * direction - 3 * ortho_dir))
-                        flow_velocity4 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 1 * direction - 3 * ortho_dir))
-                        flow_velocity = np.mean([flow_velocity1, flow_velocity2, flow_velocity3, flow_velocity4], axis=0)
+                        # To get an accurate measurement of the absolute flow we grab the velocity at 8 points around the colloid.
+                        # Note, that this is currently hardcoded for colloids with a radius of 1 and 2D.
+                        f1 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 2 * direction + 2 * ortho_dir))
+                        f2 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 2 * direction + 2 * ortho_dir))
+                        f3 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 2 * direction - 2 * ortho_dir))
+                        f4 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 2 * direction - 2 * ortho_dir))
+
+                        f5 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 3 * direction + 0 * ortho_dir))
+                        f6 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 0 * direction + 3 * ortho_dir))
+                        f7 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 0 * direction - 3 * ortho_dir))
+                        f8 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 3 * direction - 0 * ortho_dir))
+
+                        flow_velocity = np.mean([f1, f2, f3, f4, f5, f6, f7, f8], axis=0)
 
                     else:
                         flow_velocity = 0
