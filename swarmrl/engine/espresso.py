@@ -1472,10 +1472,10 @@ class EspressoMD(Engine):
 
                         # To get an accurate measurement of the absolute flow we grab the velocity at 8 points around the colloid.
                         # Note, that this is currently hardcoded for colloids with a radius of 1 and 2D.
-                        f1 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 2 * direction + 2 * ortho_dir))
-                        f2 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 2 * direction + 2 * ortho_dir))
-                        f3 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 2 * direction - 2 * ortho_dir))
-                        f4 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 2 * direction - 2 * ortho_dir))
+                        f1 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 3 * direction + 3 * ortho_dir))
+                        f2 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 3 * direction + 3 * ortho_dir))
+                        f3 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 3 * direction - 3 * ortho_dir))
+                        f4 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 3 * direction - 3 * ortho_dir))
 
                         f5 = self.system.lb.get_interpolated_velocity(pos=(col.pos + 3 * direction + 0 * ortho_dir))
                         f6 = self.system.lb.get_interpolated_velocity(pos=(col.pos - 0 * direction + 3 * ortho_dir))
