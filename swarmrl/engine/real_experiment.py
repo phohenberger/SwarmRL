@@ -7,7 +7,7 @@ import typing
 
 import numpy as np
 
-import swarmrl.engine.engine
+from .engine import Engine
 from swarmrl.components import Colloid
 from swarmrl.force_functions.force_fn import ForceFunction
 
@@ -32,7 +32,7 @@ def vector_from_angle(angle):
     return np.array([np.cos(angle), np.sin(angle), 0])
 
 
-class RealExperiment(swarmrl.engine.engine.Engine):
+class RealExperiment(Engine):
     """
     Class for the real experiment interface.
     """
