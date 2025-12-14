@@ -16,6 +16,10 @@ class MPIAction:
     id = 0
     magnitude: np.ndarray = np.array([0.0, 0.0])
     frequency: np.ndarray = np.array([0.0, 0.0])
-    # magnetic_field: np.ndarray = np.array([0.0, 0.0])
+    phase: np.ndarray = np.array([0.0, 0.0])
+    offset: np.ndarray = np.array([0.0, 0.0])
+    
+    # unused 
+    magnetic_field: np.ndarray = np.array([0.0, 0.0])
     keep_magnetic_field: float = 1.0
     gradient: np.ndarray = np.array([0.0, 0.0])
