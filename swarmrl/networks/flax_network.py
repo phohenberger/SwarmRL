@@ -178,8 +178,10 @@ class FlaxModel(Network, ABC):
             )
         logger.debug(f"{logits=}")  # (n_colloids, n_actions)
 
-        # Compute the action
+        # Compute the action (sampling strategies return torch tensors; convert back)
         indices = self.sampling_strategy(logits)
+        if hasattr(indices, "numpy"):
+            indices = onp.array(indices)
         # Add a small value to the log_probs to avoid log(0) errors.
         eps = 1e-8
         log_probs = np.log(jax.nn.softmax(logits) + eps)
@@ -187,6 +189,8 @@ class FlaxModel(Network, ABC):
         indices = self.exploration_policy(
             indices, logits.shape[-1], onp.random.randint(8759865)
         )
+        if hasattr(indices, "numpy"):
+            indices = onp.array(indices)
         return (
             indices,
             np.take_along_axis(log_probs, indices.reshape(-1, 1), axis=1).reshape(-1),

@@ -4,7 +4,7 @@ Module for the intrinsic reward parent class.
 
 from abc import ABC
 
-import jax.numpy as np
+import numpy as np
 
 from swarmrl.utils.colloid_utils import TrajectoryInformation
 

@@ -1,134 +1,82 @@
 """
-Module for the implementation of policy gradient loss.
-
-Policy gradient is the most simplistic loss function where critic loss drives the entire
-policy learning.
+Policy gradient (REINFORCE + baseline) loss.
 
 Notes
 -----
 https://spinningup.openai.com/en/latest/algorithms/vpg.html
 """
 
-import jax
-import jax.numpy as jnp
-import optax
-from flax.core.frozen_dict import FrozenDict
+import torch
+import torch.nn.functional as F
 
 from swarmrl.losses.loss import Loss
 from swarmrl.networks.network import Network
-from swarmrl.utils.logging_utils import log_jax_runtime_value
-from swarmrl.utils.utils import gather_n_dim_indices
 from swarmrl.value_functions.expected_returns import ExpectedReturns
 
 
 class PolicyGradientLoss(Loss):
     """
-    Parent class for the reinforcement learning tasks.
-
-    Notes
-    -----
+    Vanilla policy gradient with a value-function baseline.
     """
 
     def __init__(self, value_function: ExpectedReturns = ExpectedReturns()):
-        """
-        Constructor for the reward class.
-
-        Parameters
-        ----------
-        value_function : ExpectedReturns
-        """
         super(Loss, self).__init__()
         self.value_function = value_function
-        self.n_particles = None
-        self.n_time_steps = None
 
     def _calculate_loss(
         self,
-        network_params: FrozenDict,
         network: Network,
-        feature_data: jnp.ndarray,
-        action_indices: jnp.ndarray,
-        rewards: jnp.ndarray,
-    ) -> jnp.array:
+        feature_data: torch.Tensor,
+        action_indices: torch.Tensor,
+        rewards: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Compute the loss of the shared actor-critic network.
-
         Parameters
         ----------
-        network : FlaxModel
-            The actor-critic network that approximates the policy.
-        network_params : FrozenDict
-            Parameters of the actor-critic model used.
-        feature_data : np.ndarray (n_time_steps, n_particles, feature_dimension)
-            Observable data for each time step and particle within the episode.
-        action_indices : np.ndarray (n_time_steps, n_particles)
-            The actions taken by the policy for all time steps and particles during one
-            episode.
-        rewards : np.ndarray (n_time_steps, n_particles)
-            The rewards received for all time steps and particles during one episode.
-
+        network : TorchModel
+        feature_data : torch.Tensor (n_steps, n_agents, feature_dim)
+        action_indices : torch.Tensor (n_steps, n_agents)
+        rewards : torch.Tensor (n_steps, n_agents)
 
         Returns
         -------
-        loss : float
-            The loss of the actor-critic network for the last episode.
+        loss : torch.Tensor (scalar)
         """
+        logits, predicted_values = network(feature_data)
+        predicted_values = predicted_values.squeeze(-1)
 
-        # (n_timesteps, n_particles, n_possibilities)
-        logits, predicted_values = network(network_params, feature_data)
-        predicted_values = predicted_values.squeeze()
-        probabilities = jax.nn.softmax(logits)  # get probabilities
-        chosen_probabilities = gather_n_dim_indices(probabilities, action_indices)
-        log_probs = jnp.log(chosen_probabilities + 1e-8)
-        log_jax_runtime_value("log_probs", log_probs)
+        probabilities = torch.softmax(logits, dim=-1)
+        log_probs = torch.log(
+            torch.gather(probabilities, -1, action_indices.long().unsqueeze(-1)).squeeze(-1)
+            + 1e-8
+        )
 
         returns = self.value_function(rewards)
-        log_jax_runtime_value("returns", returns)
 
-        log_jax_runtime_value("predicted_values", predicted_values)
+        advantage = (returns - predicted_values).detach()
 
-        # (n_timesteps, n_particles)
-        advantage = returns - predicted_values
-        log_jax_runtime_value("advantage", advantage)
-
-        # Sum over time steps and average over agents.
-        critic_loss = optax.huber_loss(predicted_values, returns).sum(axis=0).sum()
-
-        advantage = jax.lax.stop_gradient(advantage)
-        actor_loss = -1 * ((log_probs * advantage).sum(axis=0)).sum()
-        log_jax_runtime_value("actor_loss", actor_loss)
+        critic_loss = F.huber_loss(predicted_values, returns, reduction="sum")
+        actor_loss = -1 * (log_probs * advantage).sum()
 
         return actor_loss + critic_loss
 
     def compute_loss(self, network: Network, episode_data):
         """
-        Compute the loss and update the shared actor-critic network.
+        Compute a single gradient step.
 
         Parameters
         ----------
-        network : Network
-                actor-critic model to use in the analysis.
-        episode_data : np.ndarray (n_timesteps, n_particles, feature_dimension)
-                Observable data for each time step and particle within the episode.
-
-        Returns
-        -------
-
+        network : TorchModel
+        episode_data : TrajectoryInformation
         """
-        feature_data = jnp.array(episode_data.features)
-        action_data = jnp.array(episode_data.actions)
-        reward_data = jnp.array(episode_data.rewards)
+        feature_data = torch.tensor(episode_data.features, dtype=torch.float32)
+        action_data = torch.tensor(episode_data.actions, dtype=torch.float32)
+        reward_data = torch.tensor(episode_data.rewards, dtype=torch.float32)
 
-        self.n_particles = jnp.shape(feature_data)[1]
-        self.n_time_steps = jnp.shape(feature_data)[0]
-
-        network_grad_fn = jax.value_and_grad(self._calculate_loss)
-        _, network_grads = network_grad_fn(
-            network.model_state.params,
+        loss = self._calculate_loss(
             network=network,
             feature_data=feature_data,
             action_indices=action_data,
             rewards=reward_data,
         )
-
-        network.update_model(network_grads)
+        network.update_model(loss)

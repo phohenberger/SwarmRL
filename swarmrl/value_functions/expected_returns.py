@@ -2,82 +2,53 @@
 Module for the expected returns value function.
 """
 
-from functools import partial
-
-import jax
-import jax.numpy as np
-
-from swarmrl.utils.logging_utils import log_jax_runtime_value
+import torch
 
 
 class ExpectedReturns:
     """
-    Class for the expected returns.
+    Compute discounted cumulative returns for each time step.
     """
 
     def __init__(self, gamma: float = 0.99, standardize: bool = True):
         """
-        Constructor for the Expected returns class
-
         Parameters
         ----------
         gamma : float
-                A decay factor for the values of the task each time step.
+            Discount factor.
         standardize : bool
-                If True, standardize the results of the calculation.
-
-        Notes
-        -----
-        See https://www.tensorflow.org/tutorials/reinforcement_learning/actor_critic
-        for more information.
+            If True, standardize returns to zero mean / unit variance per agent.
         """
         self.gamma = gamma
         self.standardize = standardize
+        self.eps = torch.finfo(torch.float32).eps
 
-        # Set by us to stabilize division operations.
-        self.eps = np.finfo(np.float32).eps.item()
-
-    @partial(jax.jit, static_argnums=(0,))
-    def __call__(self, rewards: np.ndarray):
+    def __call__(self, rewards: torch.Tensor) -> torch.Tensor:
         """
-        Call function for the expected returns.
+        Compute expected returns.
+
         Parameters
         ----------
-        rewards : np.ndarray (n_time_steps, n_particles, dimension)
-                A numpy array of rewards to use in the calculation.
+        rewards : torch.Tensor (n_steps, n_agents)
 
         Returns
         -------
-        expected_returns : np.ndarray (n_time_steps, n_particles)
-                Expected returns for the rewards.
+        expected_returns : torch.Tensor (n_steps, n_agents)
         """
-        log_jax_runtime_value("gamma", self.gamma)
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.tensor(rewards, dtype=torch.float32)
+        n_steps, n_agents = rewards.shape
+        expected_returns = torch.zeros_like(rewards)
 
-        expected_returns = np.zeros_like(rewards)
-        n_particles = rewards.shape[1]
-
-        final_time = len(rewards) + 1
-        log_jax_runtime_value("rewards", rewards)
-
-        for t, reward in enumerate(rewards):
-            gamma_array = self.gamma ** np.linspace(
-                t + 1, final_time, int(final_time - (t + 1)), dtype=int
-            )
-            gamma_array = np.transpose(
-                np.repeat(gamma_array[None, :], n_particles, axis=0)
-            )
-
-            proceeding_rewards = rewards[t:, :]
-
-            returns = proceeding_rewards * gamma_array
-            expected_returns = expected_returns.at[t, :].set(returns.sum(axis=0))
-
-        log_jax_runtime_value("expected_returns", expected_returns)
+        for t in range(n_steps):
+            exponents = torch.arange(n_steps - t, dtype=torch.float32)
+            gamma_array = self.gamma ** exponents  # (n_steps - t,)
+            gamma_array = gamma_array.unsqueeze(1).expand(-1, n_agents)
+            expected_returns[t] = (rewards[t:] * gamma_array).sum(dim=0)
 
         if self.standardize:
-            mean_vector = np.mean(expected_returns, axis=0)
-            std_vector = np.std(expected_returns, axis=0) + self.eps
-
-            expected_returns = (expected_returns - mean_vector) / std_vector
+            mean = expected_returns.mean(dim=0)
+            std = expected_returns.std(dim=0, correction=0) + self.eps
+            expected_returns = (expected_returns - mean) / std
 
         return expected_returns

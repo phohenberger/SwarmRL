@@ -2,7 +2,7 @@
 Test the SwarmRL agents
 """
 
-import jax.numpy as np
+import numpy as np
 from numpy.testing import assert_array_equal
 
 from swarmrl.components.colloid import Colloid
@@ -32,22 +32,25 @@ class TestComponents:
         assert colloid.id == 0
         assert colloid.type == 0
 
-    def test_colloid_unwrapping(self):
+    def test_colloid_equality(self):
         """
-        Test the pytree aspects of the colloid.
+        Test Colloid equality is based on id.
         """
-        colloid = Colloid(
+        colloid_a = Colloid(
             pos=np.array([0.0, 0.0, 0.0]),
             director=np.array([0.0, 0.0, 1.0]),
             id=0,
             velocity=np.array([0.0, 0.0, 0.0]),
             type=0,
         )
-
-        colloid_tree = colloid.tree_flatten()
-        colloid_unwrapped = Colloid.tree_unflatten(None, colloid_tree[0])
-
-        assert colloid == colloid_unwrapped
+        colloid_b = Colloid(
+            pos=np.array([1.0, 2.0, 3.0]),
+            director=np.array([1.0, 0.0, 0.0]),
+            id=0,
+            velocity=np.array([0.0, 0.0, 0.0]),
+            type=1,
+        )
+        assert colloid_a == colloid_b
 
     def test_swarm_agent(self):
         """

@@ -7,8 +7,8 @@ import pickle
 import shutil
 import typing
 
-import jax.numpy as jnp
 import numpy as np
+import numpy as jnp
 import pint
 
 from swarmrl.components.colloid import Colloid

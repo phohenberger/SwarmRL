@@ -3,7 +3,6 @@
 import sys
 import typing
 
-import jax
 from loguru import logger
 
 
@@ -149,7 +148,4 @@ def log_jax_runtime_value(
     if level_no < _LOGGING_CONFIG.jax_runtime_log_level_no:
         return
 
-    def _emit(x):
-        logger.log(level, "{label} = {value}", label=label, value=x)
-
-    jax.debug.callback(_emit, value, ordered=True)
+    logger.log(level, "{label} = {value}", label=label, value=value)

@@ -4,39 +4,34 @@ Module for the Gumbel distribution.
 
 from abc import ABC
 
-import jax
-import jax.numpy as np
-import numpy as onp
+import torch
 
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
 
 
 class GumbelDistribution(SamplingStrategy, ABC):
     """
-    Class for the Gumbel distribution.
+    Gumbel-max sampling for categorical distributions.
+
+    Notes
+    -----
+    See https://arxiv.org/abs/1611.01144 for more information.
     """
 
-    def __call__(self, logits: np.ndarray) -> np.ndarray:
+    def __call__(self, logits: torch.Tensor) -> torch.Tensor:
         """
-        Sample from the distribution.
+        Sample actions using the Gumbel-max trick.
 
         Parameters
         ----------
-        logits : np.ndarray (n_colloids, n_dimensions)
-                Logits from the model to use in the computation for all colloids.
+        logits : torch.Tensor (n_colloids, n_actions)
 
         Returns
         -------
-        indices : np.ndarray (n_colloids,)
-                Indeices of chosen actions for all colloids.
-
-        Notes
-        -----
-        See https://arxiv.org/abs/1611.01144 for more information.
+        indices : torch.Tensor (n_colloids,)
         """
-        rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
-        noise = jax.random.uniform(rng, shape=logits.shape)
-
-        indices = np.argmax(logits - np.log(-np.log(noise)), axis=-1)
-
+        if not isinstance(logits, torch.Tensor):
+            logits = torch.tensor(logits, dtype=torch.float32)
+        noise = torch.rand_like(logits)
+        indices = torch.argmax(logits - torch.log(-torch.log(noise + 1e-20)), dim=-1)
         return indices

@@ -6,9 +6,9 @@ Notes
 https://arxiv.org/abs/1810.12894
 """
 
-import jax.numpy as np
-from znnl.models.flax_model import FlaxModel
-from znnl.models.jax_model import JaxModel
+import numpy as np
+import torch
+import torch.nn as nn
 
 from swarmrl.intrinsic_reward.intrinsic_reward import IntrinsicReward
 from swarmrl.intrinsic_reward.rnd_configs import RNDArchitecture, RNDConfig
@@ -17,127 +17,87 @@ from swarmrl.utils.colloid_utils import TrajectoryInformation
 
 class RNDReward(IntrinsicReward):
     """
-    Class to implement an intrinsic loss based on Random Network Distillation.
+    Intrinsic reward based on Random Network Distillation.
 
-    This implementation is based on the neural networks framework implemented in
-    the ZnNL library.
-
-    Attributes
-    ----------
-
+    The reward is the MSE between a fixed random target network and a
+    trainable predictor network, both applied to the agent's observations.
+    High prediction error → high novelty → high intrinsic reward.
     """
 
     def __init__(self, rnd_config: RNDConfig):
-        """
-        Constructor for the RND Loss class.
+        input_dim = int(np.prod(rnd_config.input_shape))
 
-        Parameters
-        ----------
-        See RNDConfig for more information.
-        """
-        # Automatically unpack the configuration.
-        self.__dict__.update(rnd_config.__dict__)
-
-        self.iterations = 0
-        self.metric_results = None
-
-        # Initialize the predictor into the training strategy.
-        self.target_network: JaxModel = FlaxModel(
-            flax_module=RNDArchitecture(),
-            optimizer=rnd_config.optimizer,
-            input_shape=(1, *rnd_config.input_shape),
+        self.target_network = RNDArchitecture(
+            input_dim=input_dim, hidden_dim=rnd_config.hidden_dim
         )
-        self.predictor_network: JaxModel = FlaxModel(
-            flax_module=RNDArchitecture(),
-            optimizer=rnd_config.optimizer,
-            input_shape=(1, *rnd_config.input_shape),
+        self.predictor_network = RNDArchitecture(
+            input_dim=input_dim, hidden_dim=rnd_config.hidden_dim
         )
-        self.training_strategy.set_model(self.predictor_network)
+
+        # Target network is fixed — no gradient updates.
+        for p in self.target_network.parameters():
+            p.requires_grad_(False)
+
+        self.optimizer = rnd_config.optimizer_class(
+            self.predictor_network.parameters(), **rnd_config.optimizer_kwargs
+        )
+        self.loss_fn = nn.MSELoss()
+
+        self.n_epochs = rnd_config.n_epochs
+        self.batch_size = rnd_config.batch_size
+        self.clip_rewards = rnd_config.clip_rewards
 
     @staticmethod
-    def _reshape_data(x: np.ndarray) -> np.ndarray:
-        """
-        Reshape the data for an equal treatment of time and ensemble.
+    def _reshape_data(x: np.ndarray) -> torch.Tensor:
+        """Flatten (n_steps, n_agents, features) → (n_steps * n_agents, features)."""
+        arr = np.array(x)
+        return torch.tensor(arr.reshape(-1, *arr.shape[2:]), dtype=torch.float32)
 
-        Flatten the first two dimensions of the data into a single dimension to treat
-        the n_steps and num_colloids equally. This assumes that there is similar
-        information available by means of the ensemble of colloids and the time
-        evolution of the system.
+    def compute_distance(self, points: np.ndarray) -> float:
+        """
+        Compute the mean MSE between target and predictor representations.
 
         Parameters
         ----------
-        data : np.ndarray of shape (n_steps, num_colloids, num_features)
-                Data to be reshaped.
-
-        Returns
-        -------
-        reshaped_data : np.ndarray of shape (n_steps * num_colloids, num_features)
-                Reshaped data.
-        """
-        return np.reshape(x, (-1, *np.shape(x)[2:]))
-
-    def compute_distance(self, points: np.ndarray) -> np.ndarray:
-        """
-        Compute the distance between neural network representations.
-
-        Parameters
-        ----------
-        points : np.ndarray of shape (1, num_points, num_features)
-                Points on which distances should be computed.
-
-        Returns
-        -------
-        distances : np.ndarray
-                A tensor of distances computed using the attached metric.
+        points : np.ndarray (n_steps, n_agents, features)
         """
         x = self._reshape_data(points)
-        predictor_predictions = self.predictor_network(x)
-        target_predictions = self.target_network(x)
-
-        self.metric_results = self.distance_metric(
-            target_predictions, predictor_predictions
-        )
-        return np.mean(self.metric_results)
+        with torch.no_grad():
+            target_out = self.target_network(x)
+            predictor_out = self.predictor_network(x)
+        return float(self.loss_fn(predictor_out, target_out).item())
 
     def update(self, episode_data: TrajectoryInformation):
         """
-        Udpate RND based on the episode data.
-
-        More specifically, this method will update the predictor network on the
-        episode_data.features data.
-
-        Parameters
-        ----------
-        episode_data : TrajectoryInformation
-                A dictionary of episode data.
+        Train the predictor network to match the target on episode features.
         """
-        domain = self._reshape_data(episode_data.features)
-        codomain = self.target_network(domain)
-        dataset = {"inputs": domain, "targets": codomain}
-        _ = self.training_strategy.train_model(
-            train_ds=dataset,
-            test_ds=dataset,
-            epochs=self.n_epochs,
-            batch_size=self.batch_size,
-            **self.training_kwargs,
-        )
+        x = self._reshape_data(episode_data.features)
+        with torch.no_grad():
+            targets = self.target_network(x)
+
+        dataset_size = x.shape[0]
+        for _ in range(self.n_epochs):
+            idx = torch.randperm(dataset_size)[: self.batch_size]
+            x_batch, t_batch = x[idx], targets[idx]
+            pred = self.predictor_network(x_batch)
+            loss = self.loss_fn(pred, t_batch)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
 
     def compute_reward(self, episode_data: TrajectoryInformation) -> np.ndarray:
         """
-        Compute the intrinsic reward of the last state of the episode using RND.
+        Return the intrinsic reward for the last step of the episode.
 
         Parameters
         ----------
         episode_data : TrajectoryInformation
-                Information on the trajectory of the agent.
 
         Returns
         -------
-        Reward : np.ndarray of shape (num_colloids, )
-                Reward for the current state.
+        reward : float
         """
-        points = episode_data.features[-1:]
-        metric_results = self.compute_distance(points=points)
+        reward = self.compute_distance(episode_data.features[-1:])
         if self.clip_rewards is not None:
-            metric_results = np.clip(metric_results, *self.clip_rewards)
-        return metric_results
+            reward = float(np.clip(reward, *self.clip_rewards))
+        return reward

@@ -4,65 +4,54 @@ Module for the categorical distribution.
 
 from abc import ABC
 
-import jax
-import jax.numpy as np
-import numpy as onp
+import torch
 
 from swarmrl.sampling_strategies.sampling_strategy import SamplingStrategy
 
 
 class CategoricalDistribution(SamplingStrategy, ABC):
     """
-    Class for the Gumbel distribution.
+    Categorical sampling with optional additive noise.
     """
 
     def __init__(self, noise: str = "none"):
         """
-        Constructor for the categorical distribution.
-
         Parameters
         ----------
         noise : str
-                Noise method to use, options include none, uniform and gaussian.
+            Noise type to add to logits before sampling.
+            Options: 'none', 'uniform', 'gaussian'.
         """
         noise_dict = {
-            "uniform": jax.random.uniform,
-            "gaussian": jax.random.normal,
+            "uniform": lambda shape: torch.rand(shape),
+            "gaussian": lambda shape: torch.randn(shape),
             "none": None,
         }
-        try:
-            self.noise = noise_dict[noise]
-        except KeyError:
-            msg = (
-                f"Parsed noise method {noise} is not implemented, please choose"
-                "from 'none', 'gaussian' and 'uniform'."
+        if noise not in noise_dict:
+            raise KeyError(
+                f"Noise method '{noise}' is not implemented. "
+                "Choose from 'none', 'gaussian', 'uniform'."
             )
-            raise KeyError(msg)
+        self.noise_fn = noise_dict[noise]
 
-    def __call__(self, logits: np.ndarray) -> np.ndarray:
+    def __call__(self, logits: torch.Tensor) -> torch.Tensor:
         """
-        Sample from the distribution.
+        Sample from the categorical distribution.
 
         Parameters
         ----------
-        logits : np.ndarray (n_colloids, n_dimensions)
-                Logits from the model to use in the computation for all colloids.
-        entropy : bool
-                If true, the Shannon entropy of the distribution is returned.
+        logits : torch.Tensor (n_colloids, n_actions)
 
         Returns
         -------
-        indices : np.ndarray (n_colloids,)
-                Index of the selected option in the distribution.
+        indices : torch.Tensor (n_colloids,)
         """
-        rng = jax.random.PRNGKey(onp.random.randint(0, 1236534623))
+        if not isinstance(logits, torch.Tensor):
+            logits = torch.tensor(logits, dtype=torch.float32)
 
-        try:
-            noise = self.noise(rng, shape=logits.shape)
-        except TypeError:
-            # If set to None the noise is just 0
-            noise = 0
+        if self.noise_fn is not None:
+            logits = logits + self.noise_fn(logits.shape)
 
-        indices = jax.random.categorical(rng, logits=logits + noise)
-
+        probs = torch.softmax(logits, dim=-1)
+        indices = torch.multinomial(probs, num_samples=1).squeeze(-1)
         return indices

@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List
 
-import jax.numpy as np
+import numpy as np
 import numpy as onp
 from dask.distributed import Client, LocalCluster, wait
 from dask_jobqueue import JobQueueCluster

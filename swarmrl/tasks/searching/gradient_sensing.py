@@ -11,7 +11,7 @@ Requires a warm up step.
 from abc import ABC
 from typing import List
 
-import jax.numpy as np
+import numpy as np
 import numpy as onp
 
 from swarmrl.components.colloid import Colloid

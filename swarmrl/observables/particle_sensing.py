@@ -4,9 +4,7 @@ Observable for particle sensing.
 
 from typing import List
 
-import jax
-import jax.numpy as np
-import numpy as onp
+import numpy as np
 
 from swarmrl.components.colloid import Colloid
 from swarmrl.observables.observable import Observable
@@ -26,70 +24,46 @@ class ParticleSensing(Observable):
         particle_type: int = 0,
     ):
         """
-        Constructor for the observable.
-
         Parameters
         ----------
         decay_fn : callable
-                Decay function of the field.
-        box_size : np.ndarray
-                Array for scaling of the distances.
-        sensing_type : int (default=0)
-                Type of particle to sense.
-        scale_factor : int (default=100)
-                Scaling factor for the observable.
-        particle_type : int (default=0)
-                Particle type to compute the observable for.
+            Decay function of the field.
+        box_length : np.ndarray
+            Array for scaling of the distances.
+        sensing_type : int
+            Type of particle to sense.
+        scale_factor : int
+            Scaling factor for the observable.
+        particle_type : int
+            Particle type to compute the observable for.
         """
         super().__init__(particle_type=particle_type)
-
         self.decay_fn = decay_fn
         self.box_length = box_length
         self.sensing_type = sensing_type
         self.scale_factor = scale_factor
-
         self.historical_field = {}
-
-        self.observable_fn = jax.vmap(
-            self.compute_single_observable,
-            in_axes=(0, 0, None, 0),
-            # out_axes=()
-        )
 
     def initialize(self, colloids: List[Colloid]):
         """
         Initialize the observable with starting positions of the colloids.
-
-        Parameters
-        ----------
-        colloids : List[Colloid]
-                List of colloids with which to initialize the observable.
-
-        Returns
-        -------
-        Updates the class state.
         """
         reference_ids = self.get_colloid_indices(colloids)
-        historic_values = np.zeros(len(reference_ids))
-
-        positions = []
-        indices = []
-        for index in reference_ids:
-            indices.append(colloids[index].id)
-            positions.append(colloids[index].pos)
-
-        sensed_colloids = np.array([
-            colloid.pos for colloid in colloids if colloid.type == self.sensing_type
+        sensed_positions = np.array([
+            c.pos for c in colloids if c.type == self.sensing_type
         ])
 
-        out_indices, _, field_values = self.observable_fn(
-            np.array(indices), np.array(positions), sensed_colloids, historic_values
-        )
+        for index in reference_ids:
+            colloid = colloids[index]
+            _, _, field_value = self._compute_single(
+                colloid.id,
+                colloid.pos,
+                sensed_positions,
+                historic_value=0.0,
+            )
+            self.historical_field[str(colloid.id)] = field_value
 
-        for index, value in zip(out_indices, onp.array(field_values)):
-            self.historical_field[str(index)] = value
-
-    def compute_single_observable(
+    def _compute_single(
         self,
         index: int,
         reference_position: np.ndarray,
@@ -97,79 +71,52 @@ class ParticleSensing(Observable):
         historic_value: float,
     ) -> tuple:
         """
-        Compute the observable for a single colloid.
-
-        Parameters
-        ----------
-        index : int
-                Index of the colloid to compute the observable for.
-        reference_position : np.ndarray (3,)
-                Position of the reference colloid.
-        test_positions : np.ndarray (n_colloids, 3)
-                Positions of the test colloids.
-        historic_value : float
-                Historic value of the observable.
+        Compute the field observable for a single colloid.
 
         Returns
         -------
-        tuple (index, observable_value)
-        index : int
-                Index of the colloid to compute the observable for.
-        observable_value : float
-                Value of the observable.
+        (index, delta_value, field_value)
         """
         distances = np.linalg.norm(
             (test_positions - reference_position) / self.box_length, axis=-1
         )
-        indices = np.asarray(np.nonzero(distances, size=distances.shape[0] - 1))
-        distances = np.take(distances, indices, axis=0)
-        # Compute field value
-        field_value = self.decay_fn(distances).sum()
+        # Exclude the self-distance (distance == 0)
+        non_self = distances[distances != 0]
+        field_value = float(self.decay_fn(non_self).sum())
         return index, field_value - historic_value, field_value
 
     def compute_observable(self, colloids: List[Colloid]):
         """
-        Compute the position of the colloid.
+        Compute the observable for all colloids of the relevant type.
 
         Parameters
         ----------
-        colloids : List[Colloid] (n_colloids, )
-                List of all colloids in the system.
+        colloids : List[Colloid]
 
         Returns
         -------
-        observables : List[float] (n_colloids, dimension)
-                List of observables, one for each colloid. In this case,
-                current field value minus to previous field value.
+        np.ndarray (n_colloids, 1)
+            Delta field values (current minus previous).
         """
-        if self.historical_field == {}:
-            msg = (
+        if not self.historical_field:
+            raise ValueError(
                 f"{type(self).__name__} requires initialization. Please set the "
                 "initialize attribute of the gym to true and try again."
             )
-            raise ValueError(msg)
 
         reference_ids = self.get_colloid_indices(colloids)
-        positions = []
-        indices = []
-        historic_values = []
-        for index in reference_ids:
-            indices.append(colloids[index].id)
-            positions.append(colloids[index].pos)
-            historic_values.append(self.historical_field[str(colloids[index].id)])
-
         test_points = np.array([
-            colloid.pos for colloid in colloids if colloid.type == self.sensing_type
+            c.pos for c in colloids if c.type == self.sensing_type
         ])
 
-        out_indices, delta_values, field_values = self.observable_fn(
-            np.array(indices),
-            np.array(positions),
-            test_points,
-            np.array(historic_values),
-        )
+        delta_values = []
+        for index in reference_ids:
+            colloid = colloids[index]
+            historic = self.historical_field[str(colloid.id)]
+            _, delta, field_value = self._compute_single(
+                colloid.id, colloid.pos, test_points, historic
+            )
+            self.historical_field[str(colloid.id)] = field_value
+            delta_values.append(delta)
 
-        for index, value in zip(out_indices, onp.array(field_values)):
-            self.historical_field[str(index)] = value
-
-        return self.scale_factor * delta_values.reshape(-1, 1)
+        return self.scale_factor * np.array(delta_values).reshape(-1, 1)

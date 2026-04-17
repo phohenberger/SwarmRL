@@ -2,7 +2,7 @@
 Parent class for sampling strategies.
 """
 
-import jax.numpy as np
+import torch
 
 
 class SamplingStrategy:
@@ -10,31 +10,30 @@ class SamplingStrategy:
     Parent class for sampling strategies.
     """
 
-    def compute_entropy(self, probabilities: np.ndarray) -> float:
+    def compute_entropy(self, probabilities) -> torch.Tensor:
         """
         Compute the Shannon entropy of the probabilities.
 
         Parameters
         ----------
-        probabilities : np.ndarray (n_colloids, n_actions)
-                Probabilities for each colloid to take specific actions.
+        probabilities : torch.Tensor (n_colloids, n_actions)
         """
+        if not isinstance(probabilities, torch.Tensor):
+            probabilities = torch.tensor(probabilities, dtype=torch.float32)
         eps = 1e-8
-        probabilities += eps
-        return -np.sum(probabilities * np.log(probabilities))
+        p = probabilities + eps
+        return -(p * torch.log(p)).sum()
 
-    def __call__(self, logits: np.ndarray) -> int:
+    def __call__(self, logits: torch.Tensor) -> torch.Tensor:
         """
         Sample from the distribution.
 
         Parameters
         ----------
-        logits : np.ndarray (n_colloids, n_dimensions)
-                Logits from the model to use in the computation for each colloid.
+        logits : torch.Tensor (n_colloids, n_dimensions)
 
         Returns
         -------
-        sample : int
-                Index of the selected option in the distribution.
+        indices : torch.Tensor (n_colloids,)
         """
         raise NotImplementedError("Implemented in child classes.")
